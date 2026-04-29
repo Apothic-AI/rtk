@@ -5,7 +5,9 @@ use super::constants::{
     SETTINGS_JSON,
 };
 #[cfg(test)]
-use super::constants::{CODEX_DIR, CURSOR_DIR, GEMINI_DIR, GEMINI_HOOK_FILE, OPENCODE_PLUGIN_PATH};
+use super::constants::{
+    CODEX_DIR, CURSOR_DIR, GEMINI_DIR, GEMINI_HOOK_FILE, HOOKS_JSON, OPENCODE_PLUGIN_PATH,
+};
 use crate::core::constants::RTK_DATA_DIR;
 use std::path::PathBuf;
 
@@ -142,7 +144,7 @@ fn other_integration_installed(home: &std::path::Path) -> bool {
         home.join(CURSOR_DIR)
             .join(HOOKS_SUBDIR)
             .join(REWRITE_HOOK_FILE),
-        home.join(CODEX_DIR).join("AGENTS.md"),
+        home.join(CODEX_DIR).join(HOOKS_JSON),
         home.join(GEMINI_DIR)
             .join(HOOKS_SUBDIR)
             .join(GEMINI_HOOK_FILE),
@@ -237,9 +239,9 @@ mod tests {
     #[test]
     fn test_other_integration_codex() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let path = tmp.path().join(CODEX_DIR).join("AGENTS.md");
+        let path = tmp.path().join(CODEX_DIR).join(HOOKS_JSON);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, b"agents").unwrap();
+        std::fs::write(&path, b"hooks").unwrap();
         assert!(other_integration_installed(tmp.path()));
     }
 

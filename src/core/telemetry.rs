@@ -358,7 +358,7 @@ fn detect_hook_type() -> String {
         (home.join(".claude/hooks/rtk-rewrite.sh"), "claude"),
         (home.join(".claude/hooks/rtk-rewrite.json"), "claude"),
         (home.join(".gemini/hooks/rtk-hook.sh"), "gemini"),
-        (home.join(".codex/AGENTS.md"), "codex"),
+        (home.join(".codex/hooks.json"), "codex"),
         (home.join(".cursor/hooks/rtk-rewrite.json"), "cursor"),
     ];
 

@@ -28,7 +28,7 @@ LLM agent integration layer that installs, validates, and executes command-rewri
 | Claude-MD (legacy) | `rtk init --claude-md` | 134-line RTK block | CLAUDE.md |
 | Windsurf | `rtk init -g --agent windsurf` | `.windsurfrules` | -- |
 | Cline | `rtk init --agent cline` | `.clinerules` | -- |
-| Codex | `rtk init --codex` | RTK.md + hooks.json + config.toml in `$CODEX_HOME` or `~/.codex` | AGENTS.md |
+| Codex | `rtk init --codex` | hooks.json + config.toml in `$CODEX_HOME` or `~/.codex` | -- |
 | Cursor | `rtk init -g --agent cursor` | Cursor hook | hooks.json |
 
 
@@ -86,13 +86,13 @@ Rules are loaded from all Claude Code `settings.json` files (project + global, i
 | Copilot VS Code (rtk hook copilot) | Yes | `permissionDecision: "ask"` — user prompted |
 | Gemini CLI (rtk hook gemini) | No (allow/deny only) | allow (limitation — no ask mode in Gemini) |
 | Copilot CLI (rtk hook copilot) | No updatedInput | deny-with-suggestion (unchanged) |
-| Codex | No in-place `updatedInput` | deny-with-suggestion |
+| Codex | Yes | transparent rewrite |
 
 ### Implementation
 
 - `permissions.rs` — loads deny/ask/allow rules, evaluates precedence, returns `PermissionVerdict`
 - `rewrite_cmd.rs` — maps verdict to exit code (consumed by shell hook)
-- `hook_cmd.rs` — maps verdict to JSON `permissionDecision` field (Copilot/Gemini/Codex)
+- `hook_cmd.rs` — maps verdicts to agent-specific hook JSON (Copilot/Gemini/Codex)
 
 ## Exit Code Contract
 

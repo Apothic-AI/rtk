@@ -12,7 +12,7 @@ Relationship to `src/hooks/`: that component **creates** these files; this direc
 
 ## Purpose
 
-LLM agent integrations that intercept CLI commands and route them through RTK for token optimization. Most hooks transparently rewrite raw commands (e.g., `git status`) to their RTK equivalents (e.g., `rtk git status`), delivering 60-90% token savings without requiring the agent or user to change their workflow. Codex currently uses deny-with-suggestion because its PreToolUse hook cannot apply `updatedInput` in-place yet.
+LLM agent integrations that intercept CLI commands and route them through RTK for token optimization. Most hooks transparently rewrite raw commands (e.g., `git status`) to their RTK equivalents (e.g., `rtk git status`), delivering 60-90% token savings without requiring the agent or user to change their workflow.
 
 ## How It Works
 
@@ -38,7 +38,7 @@ Each agent subdirectory has its own README with hook-specific details:
 - **[`cursor/`](cursor/README.md)** — Shell hook, Cursor JSON format, empty `{}` response requirement
 - **[`cline/`](cline/README.md)** — Rules file (prompt-level), `.clinerules` project-local installation
 - **[`windsurf/`](windsurf/README.md)** — Rules file (prompt-level), `.windsurfrules` workspace-scoped
-- **[`codex/`](codex/README.md)** — Codex hooks.json wiring, `rtk hook codex`, `AGENTS.md` integration
+- **[`codex/`](codex/README.md)** — Codex hooks.json wiring, `rtk hook codex`, transparent rewrite
 - **[`opencode/`](opencode/README.md)** — TypeScript plugin, `zx` library, `tool.execute.before` event, in-place mutation
 
 ## Supported Agents
@@ -52,7 +52,7 @@ Each agent subdirectory has its own README with hook-specific details:
 | Gemini CLI | Rust binary (`rtk hook gemini`) | Transparent rewrite | Yes (`hookSpecificOutput`) |
 | Cline / Roo Code | Custom instructions (rules file) | Prompt-level guidance | N/A |
 | Windsurf | Custom instructions (rules file) | Prompt-level guidance | N/A |
-| Codex CLI | Rust binary (`rtk hook codex`) + AGENTS.md | Deny-with-suggestion | No (agent retries) |
+| Codex CLI | Rust binary (`rtk hook codex`) | Transparent rewrite | Yes (`updatedInput`) |
 | OpenCode | TypeScript plugin (`tool.execute.before`) | In-place mutation | Yes |
 
 ## JSON Formats by Agent

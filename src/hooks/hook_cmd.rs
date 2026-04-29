@@ -63,9 +63,6 @@ pub fn run_copilot() -> Result<()> {
 }
 
 /// Run the Codex CLI PreToolUse hook.
-///
-/// Codex currently parses `updatedInput` but does not apply it yet, so RTK uses
-/// deny-with-suggestion here instead of transparent rewrite.
 pub fn run_codex() -> Result<()> {
     let input = read_stdin_limited()?;
 
@@ -92,8 +89,13 @@ pub fn run_codex() -> Result<()> {
         return Ok(());
     }
 
-    let cmd = match v
-        .pointer("/tool_input/command")
+    let tool_input = match v.get("tool_input") {
+        Some(tool_input) => tool_input,
+        None => return Ok(()),
+    };
+
+    let cmd = match tool_input
+        .get("command")
         .and_then(|c| c.as_str())
         .filter(|c| !c.is_empty())
     {
@@ -101,7 +103,7 @@ pub fn run_codex() -> Result<()> {
         None => return Ok(()),
     };
 
-    let output = match codex_block_response(cmd) {
+    let output = match codex_rewrite_response(tool_input, cmd) {
         Some(output) => output,
         None => return Ok(()),
     };
@@ -225,11 +227,15 @@ fn handle_copilot_cli(cmd: &str) -> Result<()> {
     Ok(())
 }
 
-fn codex_block_response(cmd: &str) -> Option<Value> {
-    codex_block_response_with_verdict(cmd, permissions::check_command(cmd))
+fn codex_rewrite_response(tool_input: &Value, cmd: &str) -> Option<Value> {
+    codex_rewrite_response_with_verdict(tool_input, cmd, permissions::check_command(cmd))
 }
 
-fn codex_block_response_with_verdict(cmd: &str, verdict: PermissionVerdict) -> Option<Value> {
+fn codex_rewrite_response_with_verdict(
+    tool_input: &Value,
+    cmd: &str,
+    verdict: PermissionVerdict,
+) -> Option<Value> {
     if verdict == PermissionVerdict::Deny {
         audit_log("deny", cmd, "");
         return None;
@@ -238,11 +244,20 @@ fn codex_block_response_with_verdict(cmd: &str, verdict: PermissionVerdict) -> O
     let rewritten = get_rewritten(cmd)?;
     audit_log("rewrite", cmd, &rewritten);
 
+    let updated_input = {
+        let mut input = tool_input.clone();
+        if let Some(obj) = input.as_object_mut() {
+            obj.insert("command".into(), Value::String(rewritten.clone()));
+            input
+        } else {
+            json!({ "command": rewritten })
+        }
+    };
+
     Some(json!({
         "hookSpecificOutput": {
             "hookEventName": PRE_TOOL_USE_KEY,
-            "permissionDecision": "deny",
-            "permissionDecisionReason": format!("Rerun that as: {}", rewritten)
+            "updatedInput": updated_input
         }
     }))
 }
@@ -658,27 +673,49 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_hook_blocks_supported_command_with_suggestion() {
-        let output = codex_block_response("git status").unwrap();
+    fn test_codex_hook_rewrites_supported_command() {
+        let tool_input = json!({
+            "command": "git status",
+            "timeout": 30000,
+            "description": "Check repo status"
+        });
+        let output = codex_rewrite_response(&tool_input, "git status").unwrap();
         assert_eq!(
             output["hookSpecificOutput"]["hookEventName"],
             PRE_TOOL_USE_KEY
         );
-        assert_eq!(output["hookSpecificOutput"]["permissionDecision"], "deny");
         assert_eq!(
-            output["hookSpecificOutput"]["permissionDecisionReason"],
-            "Rerun that as: rtk git status"
+            output["hookSpecificOutput"]["updatedInput"]["command"],
+            "rtk git status"
         );
+        assert_eq!(
+            output["hookSpecificOutput"]["updatedInput"]["timeout"],
+            30000
+        );
+        assert_eq!(
+            output["hookSpecificOutput"]["updatedInput"]["description"],
+            "Check repo status"
+        );
+        assert!(output["hookSpecificOutput"]["permissionDecision"].is_null());
+        assert!(output["hookSpecificOutput"]["permissionDecisionReason"].is_null());
     }
 
     #[test]
     fn test_codex_hook_ignores_already_rtk_command() {
-        assert!(codex_block_response("rtk git status").is_none());
+        assert!(
+            codex_rewrite_response(&json!({ "command": "rtk git status" }), "rtk git status")
+                .is_none()
+        );
     }
 
     #[test]
     fn test_codex_hook_respects_deny_verdict() {
-        assert!(codex_block_response_with_verdict("git status", PermissionVerdict::Deny).is_none());
+        assert!(codex_rewrite_response_with_verdict(
+            &json!({ "command": "git status" }),
+            "git status",
+            PermissionVerdict::Deny
+        )
+        .is_none());
     }
 
     #[test]

@@ -364,7 +364,7 @@ enum Commands {
         #[arg(long)]
         uninstall: bool,
 
-        /// Target Codex CLI (AGENTS.md + RTK.md + hooks.json deny-with-suggestion)
+        /// Target Codex CLI (hooks.json + config.toml transparent rewrite)
         #[arg(long)]
         codex: bool,
 
