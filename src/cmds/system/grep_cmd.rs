@@ -1,7 +1,7 @@
 //! Filters grep output by grouping matches by file.
 
 use crate::core::config;
-use crate::core::stream::exec_capture;
+use crate::core::stream::{CaptureResult, exec_capture};
 use crate::core::tracking;
 use crate::core::utils::resolved_command;
 use anyhow::{Context, Result};
@@ -55,6 +55,69 @@ pub fn run(
         })
         .context("grep/rg failed")?;
 
+    render_grouped_matches(
+        &timer,
+        &format!("grep -rn '{}' {}", pattern, path),
+        "rtk grep",
+        pattern,
+        path,
+        result,
+        max_line_len,
+        max_results,
+        context_only,
+    )
+}
+
+pub fn run_rg(args: &[String], verbose: u8) -> Result<i32> {
+    let timer = tracking::TimedExecution::start();
+    let mut rg_cmd = resolved_command("rg");
+    let passthrough = rg_passthrough_mode(args);
+
+    if verbose > 0 {
+        eprintln!("rg: {}", args.join(" "));
+    }
+
+    if !passthrough {
+        rg_cmd.args(["-n", "--no-heading"]);
+    }
+    rg_cmd.args(args);
+
+    let result = exec_capture(&mut rg_cmd).context("rg failed")?;
+    let command = format!("rg {}", args.join(" "));
+
+    if passthrough {
+        print!("{}", result.stdout);
+        eprint!("{}", result.stderr);
+        timer.track_passthrough(&command, "rtk rg (passthrough)");
+        return Ok(result.exit_code);
+    }
+
+    let pattern = rg_pattern_hint(args).unwrap_or("rg");
+    render_grouped_matches(
+        &timer,
+        &command,
+        "rtk rg",
+        pattern,
+        ".",
+        result,
+        80,
+        config::limits().grep_max_results,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_grouped_matches(
+    timer: &tracking::TimedExecution,
+    original_command: &str,
+    rtk_command: &str,
+    pattern: &str,
+    default_path: &str,
+    result: CaptureResult,
+    max_line_len: usize,
+    max_results: usize,
+    context_only: bool,
+) -> Result<i32> {
     let exit_code = result.exit_code;
     let raw_output = result.stdout.clone();
 
@@ -67,12 +130,7 @@ pub fn run(
         }
         let msg = format!("0 matches for '{}'", pattern);
         println!("{}", msg);
-        timer.track(
-            &format!("grep -rn '{}' {}", pattern, path),
-            "rtk grep",
-            &raw_output,
-            &msg,
-        );
+        timer.track(original_command, rtk_command, &raw_output, &msg);
         return Ok(exit_code);
     }
 
@@ -96,7 +154,7 @@ pub fn run(
             (parts[0].to_string(), ln, parts[2])
         } else if parts.len() == 2 {
             let ln = parts[0].parse().unwrap_or(0);
-            (path.to_string(), ln, parts[1])
+            (default_path.to_string(), ln, parts[1])
         } else {
             continue;
         };
@@ -137,14 +195,101 @@ pub fn run(
     }
 
     print!("{}", rtk_output);
-    timer.track(
-        &format!("grep -rn '{}' {}", pattern, path),
-        "rtk grep",
-        &raw_output,
-        &rtk_output,
-    );
+    timer.track(original_command, rtk_command, &raw_output, &rtk_output);
 
     Ok(exit_code)
+}
+
+fn rg_passthrough_mode(args: &[String]) -> bool {
+    for arg in args {
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            let name = long.split_once('=').map_or(long, |(name, _)| name);
+            if matches!(
+                name,
+                "count"
+                    | "count-matches"
+                    | "debug"
+                    | "files"
+                    | "files-with-matches"
+                    | "files-without-match"
+                    | "generate"
+                    | "help"
+                    | "json"
+                    | "pcre2-version"
+                    | "stats"
+                    | "trace"
+                    | "type-list"
+                    | "version"
+                    | "vimgrep"
+            ) {
+                return true;
+            }
+            continue;
+        }
+
+        let Some(short) = arg.strip_prefix('-') else {
+            continue;
+        };
+        if short.is_empty() || short.chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+        if short.chars().any(|ch| matches!(ch, 'c' | 'h' | 'l' | 'V')) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn rg_pattern_hint(args: &[String]) -> Option<&str> {
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--" {
+            continue;
+        }
+        if arg.starts_with("--") {
+            let name = arg
+                .trim_start_matches("--")
+                .split_once('=')
+                .map_or_else(|| arg.trim_start_matches("--"), |(name, _)| name);
+            if !arg.contains('=')
+                && matches!(
+                    name,
+                    "after-context"
+                        | "before-context"
+                        | "context"
+                        | "glob"
+                        | "max-count"
+                        | "max-depth"
+                        | "sort"
+                        | "type"
+                        | "type-add"
+                        | "type-not"
+                )
+            {
+                skip_next = true;
+            }
+            continue;
+        }
+        if let Some(short) = arg.strip_prefix('-') {
+            if short.is_empty() || short.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+            if matches!(short, "A" | "B" | "C" | "g" | "m" | "t" | "T") {
+                skip_next = true;
+            }
+            continue;
+        }
+        return Some(arg);
+    }
+    None
 }
 
 fn clean_line(line: &str, max_len: usize, context_re: Option<&Regex>, pattern: &str) -> String {
@@ -331,5 +476,36 @@ mod tests {
             );
         }
         // If rg is not installed, skip gracefully (test still passes)
+    }
+
+    #[test]
+    fn test_rg_passthrough_modes() {
+        assert!(rg_passthrough_mode(&["--files".to_string()]));
+        assert!(rg_passthrough_mode(&["--json".to_string(), "TODO".to_string()]));
+        assert!(rg_passthrough_mode(&["-l".to_string(), "TODO".to_string()]));
+        assert!(!rg_passthrough_mode(&[
+            "-n".to_string(),
+            "--hidden".to_string(),
+            "--glob".to_string(),
+            "!**/.git/**".to_string(),
+            "TODO".to_string(),
+            ".".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn test_rg_pattern_hint_skips_option_values() {
+        let args = vec![
+            "-n".to_string(),
+            "--hidden".to_string(),
+            "--glob".to_string(),
+            "!**/.git/**".to_string(),
+            "-t".to_string(),
+            "rust".to_string(),
+            "TODO".to_string(),
+            ".".to_string(),
+        ];
+
+        assert_eq!(rg_pattern_hint(&args), Some("TODO"));
     }
 }

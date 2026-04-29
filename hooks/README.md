@@ -168,7 +168,7 @@ The registry (`src/discover/registry.rs`) handles command patterns across these 
 | Language Servers | tsc, mypy | 80-83% |
 | Linters | eslint, ruff, golangci-lint, biome | 80-85% |
 | Package Managers | pip, cargo install, pnpm list | 75-80% |
-| File Operations | ls, find, grep, cat, head, tail | 60-75% |
+| File Operations | ls, find, rg, grep, cat, head, tail | 60-75% |
 | Infrastructure | docker, kubectl, aws, terraform | 75-85% |
 
 ### Compound Command Handling

@@ -1399,7 +1399,7 @@ mod tests {
     fn test_rewrite_rg_pattern() {
         assert_eq!(
             rewrite_command("rg \"fn main\"", &[]),
-            Some("rtk grep \"fn main\"".into())
+            Some("rtk rg \"fn main\"".into())
         );
     }
 
@@ -3229,6 +3229,19 @@ mod tests {
             classify_command("/usr/bin/grep -rni pattern"),
             Classification::Supported {
                 rtk_equivalent: "rtk grep",
+                category: "Files",
+                estimated_savings_pct: 75.0,
+                status: RtkStatus::Existing,
+            }
+        );
+    }
+
+    #[test]
+    fn test_classify_absolute_path_rg() {
+        assert_eq!(
+            classify_command("/usr/bin/rg -n pattern"),
+            Classification::Supported {
+                rtk_equivalent: "rtk rg",
                 category: "Files",
                 estimated_savings_pct: 75.0,
                 status: RtkStatus::Existing,

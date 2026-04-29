@@ -322,6 +322,13 @@ enum Commands {
         extra_args: Vec<String>,
     },
 
+    /// Compact ripgrep - preserves rg flags and groups match output by file
+    Rg {
+        /// Arguments passed to rg
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Initialize rtk instructions for assistant CLI usage
     Init {
         /// Add to global assistant config directory instead of local project file
@@ -1744,6 +1751,8 @@ fn run_cli() -> Result<i32> {
             &extra_args,
             cli.verbose,
         )?,
+
+        Commands::Rg { args } => grep_cmd::run_rg(&args, cli.verbose)?,
 
         Commands::Init {
             global,

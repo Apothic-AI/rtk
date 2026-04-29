@@ -202,7 +202,7 @@ Supporte a la fois la syntaxe RTK et la syntaxe native `find` (`-name`, `-type`,
 
 ### `rtk grep` -- Recherche dans le contenu
 
-**Objectif :** Remplace `grep` et `rg` avec une sortie groupee par fichier, tronquee.
+**Objectif :** Remplace `grep` avec une sortie groupee par fichier, tronquee. Utilisez `rtk rg` pour les options propres a ripgrep.
 
 **Syntaxe :**
 ```bash
@@ -225,7 +225,7 @@ Les arguments supplementaires sont transmis a `rg` (ripgrep).
 
 **Avant / Apres :**
 ```
-# rg "fn run" (20 lignes)                   # rtk grep "fn run" (10 lignes)
+# grep -rn "fn run" . (20 lignes)           # rtk grep "fn run" . (10 lignes)
 src/git.rs:45:pub fn run(...)                src/git.rs
 src/git.rs:120:fn run_status(...)              45: pub fn run(...)
 src/ls.rs:12:pub fn run(...)                   120: fn run_status(...)
@@ -1255,7 +1255,8 @@ rtk verify
 | `gh pr/issue/run` | `rtk gh ...` |
 | `cargo test/build/clippy/check` | `rtk cargo ...` |
 | `cat/head/tail <fichier>` | `rtk read <fichier>` |
-| `rg/grep <pattern>` | `rtk grep <pattern>` |
+| `rg <pattern>` | `rtk rg <pattern>` |
+| `grep <pattern>` | `rtk grep <pattern>` |
 | `ls` | `rtk ls` |
 | `tree` | `rtk tree` |
 | `wc` | `rtk wc` |
