@@ -9,7 +9,7 @@ mod parser;
 // Re-export command modules for routing
 use cmds::cloud::{aws_cmd, container, curl_cmd, psql_cmd, wget_cmd};
 use cmds::dotnet::{binlog, dotnet_cmd, dotnet_format_report, dotnet_trx};
-use cmds::git::{diff_cmd, gh_cmd, git, gt_cmd};
+use cmds::git::{diff_cmd, gh_cmd, git, glab_cmd, gt_cmd};
 use cmds::go::{go_cmd, golangci_cmd};
 use cmds::js::{
     lint_cmd, next_cmd, npm_cmd, playwright_cmd, pnpm_cmd, prettier_cmd, prisma_cmd, tsc_cmd,
@@ -158,6 +158,21 @@ enum Commands {
     /// GitHub CLI (gh) commands with token-optimized output
     Gh {
         /// Subcommand: pr, issue, run, repo
+        subcommand: String,
+        /// Additional arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// GitLab CLI (glab) commands with token-optimized output
+    Glab {
+        /// Target repository (owner/repo), passed as glab -R flag
+        #[arg(short = 'R', long = "repo")]
+        repo: Option<String>,
+        /// Target group, passed as glab -g flag
+        #[arg(short = 'g', long = "group")]
+        group: Option<String>,
+        /// Subcommand: mr, issue, ci, pipeline, api
         subcommand: String,
         /// Additional arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -349,7 +364,7 @@ enum Commands {
         #[arg(long)]
         uninstall: bool,
 
-        /// Target Codex CLI (uses AGENTS.md + RTK.md, no Claude hook patching)
+        /// Target Codex CLI (AGENTS.md + RTK.md + hooks.json deny-with-suggestion)
         #[arg(long)]
         codex: bool,
 
@@ -412,6 +427,12 @@ enum Commands {
         /// Show parse failure log (commands that fell back to raw execution)
         #[arg(short = 'F', long)]
         failures: bool,
+        /// Reset all token savings stats to zero
+        #[arg(long)]
+        reset: bool,
+        /// Skip confirmation prompt when resetting
+        #[arg(long, requires = "reset")]
+        yes: bool,
     },
 
     /// Claude Code economics: spending (ccusage) vs savings (rtk) analysis
@@ -712,7 +733,7 @@ enum Commands {
     /// Exits 0 and prints the rewritten command if supported.
     /// Exits 1 with no output if the command has no RTK equivalent.
     ///
-    /// Used by Claude Code, Gemini CLI, and other LLM hooks:
+    /// Used by Claude Code, Gemini CLI, Codex, and other LLM hooks:
     ///   REWRITTEN=$(rtk rewrite "$CMD") || exit 0
     Rewrite {
         /// Raw command to rewrite (e.g. "git status", "cargo test && git push")
@@ -721,7 +742,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Hook processors for LLM CLI tools (Gemini CLI, Copilot, etc.)
+    /// Hook processors for LLM CLI tools (Gemini CLI, Copilot, Codex, etc.)
     Hook {
         #[command(subcommand)]
         command: HookCommands,
@@ -738,6 +759,8 @@ enum HookCommands {
     Gemini,
     /// Process Copilot preToolUse hook (VS Code + Copilot CLI, reads JSON from stdin)
     Copilot,
+    /// Process Codex CLI PreToolUse hook (reads JSON from stdin)
+    Codex,
     /// Check how a command would be rewritten by the hook engine (dry-run)
     Check {
         /// Target agent
@@ -1524,6 +1547,25 @@ fn run_cli() -> Result<i32> {
             gh_cmd::run(&subcommand, &args, cli.verbose, cli.ultra_compact)?
         }
 
+        Commands::Glab {
+            repo,
+            group,
+            subcommand,
+            mut args,
+        } => {
+            // Append -R / -g flags at end so they don't interfere with
+            // subcommand dispatch (args[0] must be the sub-subcommand like "list")
+            if let Some(r) = repo {
+                args.push("-R".to_string());
+                args.push(r);
+            }
+            if let Some(g) = group {
+                args.push("-g".to_string());
+                args.push(g);
+            }
+            glab_cmd::run(&subcommand, &args, cli.verbose, cli.ultra_compact)?
+        }
+
         Commands::Aws { subcommand, args } => aws_cmd::run(&subcommand, &args, cli.verbose)?,
 
         Commands::Psql { args } => psql_cmd::run(&args, cli.verbose)?,
@@ -1805,6 +1847,8 @@ fn run_cli() -> Result<i32> {
             all,
             format,
             failures,
+            reset,
+            yes,
         } => {
             analytics::gain::run(
                 project, // added: pass project flag
@@ -1818,6 +1862,8 @@ fn run_cli() -> Result<i32> {
                 all,
                 &format,
                 failures,
+                reset,
+                yes,
                 cli.verbose,
             )?;
             0
@@ -2013,10 +2059,7 @@ fn run_cli() -> Result<i32> {
                 "next" => next_cmd::run(&args[1..], cli.verbose)?,
                 "prettier" => prettier_cmd::run(&args[1..], cli.verbose)?,
                 "playwright" => playwright_cmd::run(&args[1..], cli.verbose)?,
-                _ => {
-                    // Generic passthrough with npm boilerplate filter
-                    npm_cmd::run(&args, cli.verbose, cli.skip_env)?
-                }
+                _ => npm_cmd::exec(&args, cli.verbose, cli.skip_env)?,
             }
         }
 
@@ -2073,6 +2116,10 @@ fn run_cli() -> Result<i32> {
             }
             HookCommands::Copilot => {
                 hooks::hook_cmd::run_copilot()?;
+                0
+            }
+            HookCommands::Codex => {
+                hooks::hook_cmd::run_codex()?;
                 0
             }
             HookCommands::Check { agent: _, command } => {
@@ -2175,6 +2222,7 @@ fn run_cli() -> Result<i32> {
             static PROXY_CHILD_PID: AtomicU32 = AtomicU32::new(0);
 
             #[cfg(unix)]
+            #[allow(unsafe_code)]
             {
                 unsafe extern "C" fn handle_signal(sig: libc::c_int) {
                     let pid = PROXY_CHILD_PID.load(Ordering::SeqCst);
@@ -2182,7 +2230,6 @@ fn run_cli() -> Result<i32> {
                         libc::kill(pid as libc::pid_t, libc::SIGTERM);
                         libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), 0);
                     }
-                    // Re-raise with default handler so parent sees correct exit status
                     libc::signal(sig, libc::SIG_DFL);
                     libc::raise(sig);
                 }
@@ -2350,6 +2397,7 @@ fn is_operational_command(cmd: &Commands) -> bool {
             | Commands::Smart { .. }
             | Commands::Git { .. }
             | Commands::Gh { .. }
+            | Commands::Glab { .. }
             | Commands::Pnpm { .. }
             | Commands::Err { .. }
             | Commands::Test { .. }
@@ -2942,5 +2990,20 @@ mod tests {
             cli.ultra_compact,
             "--ultra-compact long form must still enable ultra-compact mode"
         );
+    }
+
+    #[test]
+    fn test_npx_unknown_tool_passthrough() {
+        // The bug (rtk-ai/rtk#815) was that unknown tools under `rtk npx`
+        // were dispatched to `npm` instead of `npx`. At the parse level, the
+        // Npx variant must carry all args through unchanged so the dispatch
+        // arm can forward them to npx.
+        let cli = Cli::try_parse_from(["rtk", "npx", "cowsay", "hello"]).unwrap();
+        match cli.command {
+            Commands::Npx { args } => {
+                assert_eq!(args, vec!["cowsay", "hello"]);
+            }
+            _ => panic!("Expected Commands::Npx for unknown tool"),
+        }
     }
 }
