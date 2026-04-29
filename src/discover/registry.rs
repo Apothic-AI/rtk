@@ -3,7 +3,7 @@
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
 
-use super::lexer::{split_on_operators, tokenize, TokenKind};
+use super::lexer::{shell_split, split_on_operators, tokenize, TokenKind};
 use super::rules::{IGNORED_EXACT, IGNORED_PREFIXES, RULES};
 
 /// Result of classifying a command.
@@ -722,6 +722,14 @@ fn rewrite_segment_inner(seg: &str, excluded: &[ExcludePattern], depth: usize) -
         return None;
     }
 
+    if is_grep_like_passthrough_mode(cmd_clean) {
+        return None;
+    }
+
+    if is_find_like_passthrough_mode(cmd_clean) {
+        return None;
+    }
+
     if let Some(parts) = parse_golangci_run_parts(cmd_clean) {
         let rewritten = if parts.global_segment.is_empty() {
             format!("{}rtk golangci-lint {}", env_prefix, parts.run_segment)
@@ -759,6 +767,78 @@ fn rewrite_segment_inner(seg: &str, excluded: &[ExcludePattern], depth: usize) -
     }
 
     None
+}
+
+fn is_grep_like_passthrough_mode(cmd: &str) -> bool {
+    let normalized = strip_absolute_path(cmd);
+    let args = shell_split(&normalized);
+    let Some(bin) = args.first().map(String::as_str) else {
+        return false;
+    };
+    if bin != "rg" && bin != "grep" {
+        return false;
+    }
+
+    for arg in args.iter().skip(1) {
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            let name = long.split_once('=').map_or(long, |(name, _)| name);
+            if matches!(
+                name,
+                "count"
+                    | "count-matches"
+                    | "debug"
+                    | "files"
+                    | "files-with-matches"
+                    | "files-without-match"
+                    | "generate"
+                    | "help"
+                    | "json"
+                    | "pcre2-version"
+                    | "stats"
+                    | "trace"
+                    | "type-list"
+                    | "version"
+                    | "vimgrep"
+            ) {
+                return true;
+            }
+            continue;
+        }
+
+        let Some(short) = arg.strip_prefix('-') else {
+            continue;
+        };
+        if short.is_empty() || short.chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+        if short.chars().any(|ch| ch == 'c' || ch == 'l') {
+            return true;
+        }
+        if bin == "grep" && short.chars().any(|ch| ch == 'L' || ch == 'V') {
+            return true;
+        }
+        if bin == "rg" && short.chars().any(|ch| ch == 'h' || ch == 'V') {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_find_like_passthrough_mode(cmd: &str) -> bool {
+    let normalized = strip_absolute_path(cmd);
+    let args = shell_split(&normalized);
+    if args.first().map(String::as_str) != Some("find") {
+        return false;
+    }
+
+    matches!(
+        args.get(1).map(String::as_str),
+        Some("--help" | "--version")
+    )
 }
 
 /// Strip a command prefix with word-boundary check.
@@ -1320,6 +1400,30 @@ mod tests {
         assert_eq!(
             rewrite_command("rg \"fn main\"", &[]),
             Some("rtk grep \"fn main\"".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_rg_metadata_modes_skipped() {
+        assert_eq!(rewrite_command("rg --version", &[]), None);
+        assert_eq!(rewrite_command("rg -V", &[]), None);
+        assert_eq!(rewrite_command("rg --files", &[]), None);
+        assert_eq!(rewrite_command("rg --type-list", &[]), None);
+        assert_eq!(rewrite_command("rg --json TODO .", &[]), None);
+        assert_eq!(rewrite_command("rg -l TODO .", &[]), None);
+        assert_eq!(rewrite_command("/usr/bin/rg --files", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_grep_metadata_modes_skipped() {
+        assert_eq!(rewrite_command("grep --version", &[]), None);
+        assert_eq!(rewrite_command("grep -V", &[]), None);
+        assert_eq!(rewrite_command("grep --help", &[]), None);
+        assert_eq!(rewrite_command("grep -c TODO file.txt", &[]), None);
+        assert_eq!(rewrite_command("grep -l TODO .", &[]), None);
+        assert_eq!(
+            rewrite_command("grep -rn TODO .", &[]),
+            Some("rtk grep -rn TODO .".into())
         );
     }
 
@@ -2913,6 +3017,20 @@ mod tests {
             rewrite_command("find . -name '*.rs' -type f", &[]),
             Some("rtk find . -name '*.rs' -type f".into())
         );
+    }
+
+    #[test]
+    fn test_rewrite_find_metadata_modes_skipped() {
+        assert_eq!(rewrite_command("find --version", &[]), None);
+        assert_eq!(rewrite_command("find --help", &[]), None);
+        assert_eq!(rewrite_command("/usr/bin/find --version", &[]), None);
+    }
+
+    #[test]
+    fn test_rewrite_fd_commands_skipped() {
+        assert_eq!(rewrite_command("fd --version", &[]), None);
+        assert_eq!(rewrite_command("fd TODO .", &[]), None);
+        assert_eq!(rewrite_command("fdfind TODO .", &[]), None);
     }
 
     #[test]
